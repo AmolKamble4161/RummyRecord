@@ -36,20 +36,50 @@ document.addEventListener('DOMContentLoaded', () => {
     let players = [];
     let gameStarted = false;
     let currentRound = 0;
-    let gameStartTime = null;
+    let gameStartTime = null; // Stored as ISO string in localStorage
     let gameInterval = null; // To store setInterval ID for game duration
-    let roundStartTimes = []; // Array to store start time for each round
+    let roundStartTimes = []; // Stored as array of ISO strings in localStorage
+    let playerCount = 2; // For initial player input generation
     const POINTS_TO_BE_OUT = 250;
     const DANGER_ZONE_POINTS = 200;
+
+    // --- Local Storage Keys ---
+    const LS_THEME_KEY = 'rummyRecordTheme';
+    const LS_GAME_STATE_KEY = 'rummyRecordGameState';
+    const LS_PLAYERS_KEY = 'rummyRecordPlayers';
+    const LS_ROUND_START_TIMES_KEY = 'rummyRecordRoundStartTimes';
 
     // --- Utility Functions ---
 
     // Function to show a modal with a message
-    function showModal(title, message) {
+    function showModal(title, message, confirmCallback = null) {
         modalTitle.textContent = title;
-        modalContent.textContent = message;
+        modalContent.innerHTML = message; // Use innerHTML for potential line breaks or richer content
         overlay.classList.remove('hidden');
         modal.classList.remove('hidden');
+
+        // Remove any previous confirm button
+        let existingConfirmBtn = document.getElementById('modal-confirm-btn');
+        if (existingConfirmBtn) {
+            existingConfirmBtn.remove();
+        }
+
+        if (confirmCallback) {
+            // Add confirm button
+            const confirmBtn = document.createElement('button');
+            confirmBtn.id = 'modal-confirm-btn';
+            confirmBtn.classList.add('danger-btn');
+            confirmBtn.style.marginRight = '10px';
+            confirmBtn.textContent = 'Confirm';
+            confirmBtn.addEventListener('click', () => {
+                confirmCallback();
+                hideModal();
+            });
+            modalCloseBtn.before(confirmBtn); // Insert before the close button
+            modalCloseBtn.textContent = 'Cancel';
+        } else {
+            modalCloseBtn.textContent = 'Close';
+        }
     }
 
     // Function to hide the modal
@@ -72,12 +102,74 @@ document.addEventListener('DOMContentLoaded', () => {
     // Calculate round duration
     function calculateRoundDuration(startTime, endTime) {
         if (!startTime || !endTime) return '00:00';
-        const durationMs = endTime - startTime;
+        const durationMs = new Date(endTime) - new Date(startTime);
         const totalSeconds = Math.floor(durationMs / 1000);
         const minutes = Math.floor(totalSeconds / 60);
         const seconds = totalSeconds % 60;
         const pad = (num) => String(num).padStart(2, '0');
         return `${pad(minutes)}:${pad(seconds)}`;
+    }
+
+    // --- Local Storage Functions ---
+    function saveGameState() {
+        const gameState = {
+            gameStarted,
+            currentRound,
+            gameStartTime: gameStartTime ? gameStartTime.toISOString() : null,
+            roundStartTimes: roundStartTimes.map(time => time ? time.toISOString() : null),
+        };
+        localStorage.setItem(LS_GAME_STATE_KEY, JSON.stringify(gameState));
+        localStorage.setItem(LS_PLAYERS_KEY, JSON.stringify(players));
+    }
+
+    function loadGameState() {
+        const savedGameState = localStorage.getItem(LS_GAME_STATE_KEY);
+        const savedPlayers = localStorage.getItem(LS_PLAYERS_KEY);
+
+        if (savedGameState && savedPlayers) {
+            const gameState = JSON.parse(savedGameState);
+            players = JSON.parse(savedPlayers);
+
+            gameStarted = gameState.gameStarted;
+            currentRound = gameState.currentRound;
+            gameStartTime = gameState.gameStartTime ? new Date(gameState.gameStartTime) : null;
+            roundStartTimes = gameState.roundStartTimes.map(time => time ? new Date(time) : null);
+
+            // Re-assign IDs to players to ensure they are unique for DOM manipulation if needed
+            players.forEach((player, index) => player.id = index);
+            playerCount = players.length; // Update playerCount based on loaded players
+
+            if (gameStarted) {
+                playerSetupSection.classList.add('hidden');
+                gameDashboardSection.classList.remove('hidden');
+                if (gameStartTime) {
+                    if (gameInterval) clearInterval(gameInterval);
+                    gameInterval = setInterval(updateGameDuration, 1000);
+                }
+                renderScoreTable();
+            } else {
+                // If game was not started, show player setup with loaded player names
+                renderPlayerSetupInputs();
+            }
+        } else {
+            // No saved game, start fresh
+            renderPlayerSetupInputs();
+        }
+    }
+
+    function renderPlayerSetupInputs() {
+        playerInputContainer.innerHTML = ''; // Clear existing inputs
+        if (players.length > 0) {
+            players.forEach((player, index) => {
+                playerInputContainer.appendChild(createPlayerInput(index + 1, player.name));
+            });
+        } else {
+            // Default 2 players if no saved game
+            playerInputContainer.appendChild(createPlayerInput(1));
+            playerInputContainer.appendChild(createPlayerInput(2));
+        }
+        // Ensure initial players for new game are reflected in playerCount
+        playerCount = playerInputContainer.children.length;
     }
 
 
@@ -87,17 +179,17 @@ document.addEventListener('DOMContentLoaded', () => {
             body.classList.remove('light-theme');
             body.classList.add('dark-theme');
             themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-            localStorage.setItem('theme', 'dark');
+            localStorage.setItem(LS_THEME_KEY, 'dark');
         } else {
             body.classList.remove('dark-theme');
             body.classList.add('light-theme');
             themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-            localStorage.setItem('theme', 'light');
+            localStorage.setItem(LS_THEME_KEY, 'light');
         }
     }
 
     // Apply saved theme on load
-    const savedTheme = localStorage.getItem('theme') || 'light';
+    const savedTheme = localStorage.getItem(LS_THEME_KEY) || 'light';
     if (savedTheme === 'dark') {
         body.classList.add('dark-theme');
         themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
@@ -155,12 +247,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // --- Player Setup ---
-    let playerCount = 2; // Start with 2 players
-
     function createPlayerInput(index, playerName = '') {
         const playerDiv = document.createElement('div');
         playerDiv.classList.add('player-input-group');
-        playerDiv.setAttribute('data-player-id', index);
+        // Player ID attribute is crucial for matching inputs to actual player objects after game starts
+        playerDiv.setAttribute('data-player-index', index); // Use index for initial setup
 
         const input = document.createElement('input');
         input.type = 'text';
@@ -176,6 +267,8 @@ document.addEventListener('DOMContentLoaded', () => {
         removeBtn.addEventListener('click', () => {
             if (playerInputContainer.children.length > 2) { // Ensure at least 2 players remain
                 playerDiv.remove();
+                // Re-index playerCount for new player adding continuity
+                playerCount = playerInputContainer.children.length;
             } else {
                 showModal('Cannot Remove Player', 'You must have at least two players to start the game.');
             }
@@ -185,10 +278,6 @@ document.addEventListener('DOMContentLoaded', () => {
         playerDiv.appendChild(removeBtn);
         return playerDiv;
     }
-
-    // Add initial player inputs
-    playerInputContainer.appendChild(createPlayerInput(1));
-    playerInputContainer.appendChild(createPlayerInput(2));
 
     addPlayerBtn.addEventListener('click', () => {
         playerCount++;
@@ -208,7 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 input.style.borderColor = 'var(--input-border)'; // Reset border color
                 tempPlayers.push({
-                    id: index,
+                    id: index, // Unique ID for each player
                     name: name,
                     totalPoints: 0,
                     rounds: [], // Array of objects: { roundNum, points, status }
@@ -229,6 +318,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         players = tempPlayers;
         startGame();
+        saveGameState(); // Save initial game state
     });
 
     // --- Game Logic ---
@@ -238,29 +328,39 @@ document.addEventListener('DOMContentLoaded', () => {
         playerSetupSection.classList.add('hidden');
         gameDashboardSection.classList.remove('hidden');
 
-        // Initialize game state
-        currentRound = 0;
-        players.forEach(p => {
-            p.totalPoints = 0;
-            p.rounds = [];
-            p.isOut = false;
-        });
-        gameOverMessage.classList.add('hidden');
-        winnerMessage.textContent = '';
-        totalPointsRow.classList.remove('hidden'); // Ensure total row is visible
+        // Initialize game state if starting fresh, or use loaded state
+        if (currentRound === 0) { // Only if no rounds were loaded
+            players.forEach(p => {
+                p.totalPoints = 0;
+                p.rounds = [];
+                p.isOut = false;
+            });
+            gameOverMessage.classList.add('hidden');
+            winnerMessage.textContent = '';
+            totalPointsRow.classList.remove('hidden'); // Ensure total row is visible
 
-        // Start game timer
-        gameStartTime = new Date();
-        if (gameInterval) clearInterval(gameInterval); // Clear any existing interval
-        gameInterval = setInterval(updateGameDuration, 1000);
+            gameStartTime = new Date();
+            roundStartTimes = []; // Clear for new game
+            if (gameInterval) clearInterval(gameInterval);
+            gameInterval = setInterval(updateGameDuration, 1000);
 
-        renderScoreTable(); // Initial table setup
-        addNewRound(); // Add the first round
+            renderScoreTable(); // Initial table setup
+            addNewRound(); // Add the first round
+        } else {
+            // Game was loaded, just resume display and timer
+            if (gameStartTime) {
+                if (gameInterval) clearInterval(gameInterval);
+                gameInterval = setInterval(updateGameDuration, 1000);
+            }
+            renderScoreTable();
+            updateGameDuration(); // Update immediately on load
+        }
+        saveGameState(); // Save state after starting/resuming
     }
 
     function updateGameDuration() {
         if (gameStartTime) {
-            const elapsed = new Date() - gameStartTime;
+            const elapsed = new Date() - new Date(gameStartTime); // Ensure gameStartTime is a Date object
             gameDurationDisplay.textContent = formatTime(elapsed);
         }
     }
@@ -275,6 +375,7 @@ document.addEventListener('DOMContentLoaded', () => {
         players.forEach(player => {
             const th = document.createElement('th');
             th.textContent = player.name;
+            // Apply status classes to header
             if (player.isOut) {
                 th.classList.add('player-out');
             } else if (player.totalPoints >= DANGER_ZONE_POINTS) {
@@ -285,6 +386,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const tdTotal = document.createElement('td');
             tdTotal.id = `total-points-${player.id}`;
             tdTotal.textContent = player.totalPoints;
+            // Apply status classes to total score
             if (player.isOut) {
                 tdTotal.classList.add('player-out');
             } else if (player.totalPoints >= DANGER_ZONE_POINTS) {
@@ -300,9 +402,9 @@ document.addEventListener('DOMContentLoaded', () => {
             roundCell.textContent = r;
 
             const durationCell = row.insertCell();
-            const roundStartTime = roundStartTimes[r - 1] || null;
-            const roundEndTime = (r === currentRound) ? new Date() : roundStartTimes[r] || null;
-            durationCell.textContent = calculateRoundDuration(roundStartTime, roundEndTime);
+            const roundStartTimeISO = roundStartTimes[r - 1]; // This is an ISO string or Date object now
+            const roundEndTimeISO = (r === currentRound) ? new Date().toISOString() : roundStartTimes[r]; // For current round, use now
+            durationCell.textContent = calculateRoundDuration(roundStartTimeISO, roundEndTimeISO);
 
 
             players.forEach(player => {
@@ -310,14 +412,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const roundData = player.rounds[r - 1]; // rounds are 0-indexed
                 const currentRoundInputActive = (r === currentRound && !player.isOut);
 
-                if (roundData) {
+                if (roundData && roundData.status !== 'out') {
                     if (roundData.status === 'dropped') {
                         cell.classList.add('dropped');
                         cell.textContent = 'Dropped (25)';
                     } else if (roundData.status === 'win') {
                         cell.classList.add('win');
                         cell.textContent = 'Win (0)';
-                    } else {
+                    } else if (roundData.points !== null) {
                         cell.textContent = roundData.points;
                     }
 
@@ -325,14 +427,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (currentRoundInputActive) {
                         const input = document.createElement('input');
                         input.type = 'text';
-                        input.value = roundData.status === 'dropped' ? 'D' : (roundData.status === 'win' ? 'W' : roundData.points);
+                        input.value = roundData.status === 'dropped' ? 'D' : (roundData.status === 'win' ? 'W' : (roundData.points !== null ? roundData.points : ''));
                         input.setAttribute('data-player-id', player.id);
                         input.setAttribute('data-round-num', r);
                         input.addEventListener('change', updatePoints);
                         cell.innerHTML = ''; // Clear text content
                         cell.appendChild(input);
                     }
-                } else if (currentRoundInputActive) { // For the current round, add input fields
+                } else if (player.isOut) {
+                    cell.classList.add('player-out');
+                    cell.textContent = 'OUT';
+                } else if (currentRoundInputActive) { // For the current round, add input fields for active players
                     const input = document.createElement('input');
                     input.type = 'text';
                     input.placeholder = 'Points';
@@ -340,13 +445,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     input.setAttribute('data-round-num', r);
                     input.addEventListener('change', updatePoints);
                     cell.appendChild(input);
-                } else if (player.isOut) {
-                    cell.classList.add('player-out');
-                    cell.textContent = 'OUT';
                 }
             });
         }
-        updateGameStatus(); // Update player out/danger status after rendering
+        updateGameStatusDisplay(); // Update player out/danger status after rendering
+        saveGameState(); // Save state after rendering
     }
 
     function addNewRound() {
@@ -375,10 +478,10 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (activePlayersCount > 0 && !winnerFound && allFilled) {
-                // If there are active players but no winner was marked, it's an error unless everyone dropped.
-                // For simplicity, we'll allow it for now but a real Rummy game needs a winner or everyone dropping.
-                // showModal('Missing Winner', 'Please mark one player as the winner (0 or W) for the previous round.');
-                // return;
+                // This scenario means active players finished a round, but no one won.
+                // In Rummy, usually someone wins, or everyone drops/loses.
+                // We'll allow it but give a warning if desired.
+                // showModal('Missing Winner', 'It seems no winner was declared for the last round.');
             }
             if (!allFilled) {
                 showModal('Incomplete Round', 'Please fill in all points for the current round before adding a new one.');
@@ -396,19 +499,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 player.rounds.push({
                     roundNum: currentRound,
                     points: null,
-                    status: null // 'win', 'dropped', or null
+                    status: null // 'win', 'dropped', 'normal', or null
                 });
             } else {
-                // If player is out, ensure they have a 'out' status for this round, or just push null
+                // If player is out, add a placeholder round entry to maintain array length
                 player.rounds.push({
                     roundNum: currentRound,
                     points: null,
-                    status: 'out'
+                    status: 'out' // Explicitly mark as out for this round
                 });
             }
         });
         renderScoreTable();
         scrollToBottom(); // Scroll to the latest round
+        saveGameState(); // Save state after adding a new round
     }
 
     function updatePoints(event) {
@@ -425,6 +529,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (player.isOut) {
             input.value = 'OUT'; // Visually reinforce
             input.disabled = true;
+            saveGameState();
             return;
         }
 
@@ -440,6 +545,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (isNaN(points) || points < 0) {
                 showModal('Invalid Input', 'Please enter a valid number, "D" for dropped, or "W" / "0" for winner.');
                 input.value = ''; // Clear invalid input
+                saveGameState();
                 return;
             }
             status = 'normal';
@@ -459,6 +565,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (winnerAlreadyMarked) {
                 showModal('Multiple Winners', 'Only one player can be the winner (0 points) per round.');
                 input.value = ''; // Clear input for the second winner
+                saveGameState();
                 return;
             }
         }
@@ -477,7 +584,8 @@ document.addEventListener('DOMContentLoaded', () => {
         players.forEach(p => {
             p.totalPoints = 0;
             p.rounds.forEach(roundData => {
-                if (roundData.status !== 'out' && roundData.points !== null) { // Only sum if not 'out' and points are recorded
+                // Only sum if points are recorded AND player wasn't explicitly "out" in that round
+                if (roundData.status !== 'out' && roundData.points !== null) {
                     p.totalPoints += roundData.points;
                 }
             });
@@ -485,24 +593,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
         checkGameOver(); // Check if any player is out or game over
         renderScoreTable(); // Re-render to update totals and styling
+        saveGameState(); // Save state after points update
     }
 
     function checkGameOver() {
-        let activePlayers = players.filter(p => !p.isOut);
-        let playersOutThisTurn = false;
+        let playersOutCount = 0;
+        let activePlayersCount = 0;
 
         // Check for players going out
         players.forEach(player => {
             if (!player.isOut && player.totalPoints >= POINTS_TO_BE_OUT) {
                 player.isOut = true;
-                playersOutThisTurn = true;
                 showModal('Player Out!', `${player.name} has reached ${player.totalPoints} points and is now OUT of the game!`);
+            }
+            if (player.isOut) {
+                playersOutCount++;
+            } else {
+                activePlayersCount++;
             }
         });
 
-        activePlayers = players.filter(p => !p.isOut);
-
-        if (activePlayers.length <= 1) { // If 0 or 1 active player remains
+        if (activePlayersCount <= 1 && currentRound > 0) { // If 0 or 1 active player remains, and at least one round has passed
             endGame();
         }
     }
@@ -516,35 +627,49 @@ document.addEventListener('DOMContentLoaded', () => {
         let finalWinner = null;
         let minPoints = Infinity;
 
-        // Consider only active players first
-        let activePlayers = players.filter(p => !p.isOut);
+        let potentialWinners = players.filter(p => !p.isOut);
 
-        if (activePlayers.length > 0) {
-            activePlayers.sort((a, b) => a.totalPoints - b.totalPoints);
-            finalWinner = activePlayers[0];
+        if (potentialWinners.length === 1) { // Exactly one active player left
+            finalWinner = potentialWinners[0];
             minPoints = finalWinner.totalPoints;
-        } else { // All players are out, find the one with lowest score among all
+        } else if (potentialWinners.length > 1) { // More than one active player somehow (shouldn't happen with current logic, but fallback)
+             potentialWinners.sort((a, b) => a.totalPoints - b.totalPoints);
+             finalWinner = potentialWinners[0];
+             minPoints = finalWinner.totalPoints;
+        } else { // All players are out, find the one with lowest score among all (including out players)
             players.sort((a, b) => a.totalPoints - b.totalPoints);
             finalWinner = players[0]; // Player with lowest score even if out
             minPoints = finalWinner.totalPoints;
         }
 
-
         gameOverMessage.classList.remove('hidden');
         if (finalWinner) {
             winnerMessage.textContent = `${finalWinner.name} wins with ${finalWinner.totalPoints} points!`;
             // Add a class to the winner's total cell for special styling
-            document.getElementById(`total-points-${finalWinner.id}`).classList.add('winner-game');
+            const winnerTotalCell = document.getElementById(`total-points-${finalWinner.id}`);
+            if (winnerTotalCell) {
+                winnerTotalCell.classList.add('winner-game');
+            }
         } else {
             winnerMessage.textContent = 'No winner could be determined (unexpected error).';
         }
 
         renderScoreTable(); // Re-render one last time to apply winner styling
+        saveGameState(); // Save final game state
     }
 
-    function updateGameStatus() {
+    function updateGameStatusDisplay() {
         players.forEach(player => {
-            const headerCell = tableHeaderRow.querySelector(`th:nth-child(${players.findIndex(p => p.id === player.id) + 3})`); // Player headers start from 3rd cell
+            const playerHeaderCells = tableHeaderRow.querySelectorAll('th');
+            // Find the correct header cell by player name (more robust than index if order shifts)
+            let headerCell = null;
+            for(let i = 2; i < playerHeaderCells.length; i++) { // Skip "Round" and "Duration"
+                if (playerHeaderCells[i].textContent === player.name) {
+                    headerCell = playerHeaderCells[i];
+                    break;
+                }
+            }
+
             const totalCell = document.getElementById(`total-points-${player.id}`);
 
             // Clear previous status classes
@@ -563,7 +688,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function scrollToBottom() {
-        scoreTableBody.scrollTop = scoreTableBody.scrollHeight;
+        // Scroll the table container if it overflows
+        const tableContainer = document.querySelector('.table-container');
+        if (tableContainer) {
+            tableContainer.scrollTop = tableContainer.scrollHeight;
+        }
     }
 
 
@@ -579,6 +708,7 @@ document.addEventListener('DOMContentLoaded', () => {
             gameStartTime = null;
             roundStartTimes = [];
             clearInterval(gameInterval);
+            gameInterval = null; // Clear interval ID
             gameDurationDisplay.textContent = '00:00:00';
             currentRoundDisplay.textContent = '0';
 
@@ -592,35 +722,10 @@ document.addEventListener('DOMContentLoaded', () => {
             gameOverMessage.classList.add('hidden');
             winnerMessage.textContent = '';
             newRoundBtn.disabled = false; // Enable button for new game
-            renderScoreTable(); // Clear table
+            renderScoreTable(); // Clear table display
+            saveGameState(); // Save empty state
         });
     });
-
-    // Special modal for confirmation
-    function showModal(title, message, confirmCallback = null) {
-        modalTitle.textContent = title;
-        modalContent.innerHTML = message; // Use innerHTML for potential line breaks or richer content
-        overlay.classList.remove('hidden');
-        modal.classList.remove('hidden');
-
-        // Remove any previous confirm button
-        let existingConfirmBtn = document.getElementById('modal-confirm-btn');
-        if (existingConfirmBtn) {
-            existingConfirmBtn.remove();
-        }
-
-        if (confirmCallback) {
-            modalContent.insertAdjacentHTML('afterend', '<button id="modal-confirm-btn" class="danger-btn" style="margin-right: 10px;">Confirm</button>');
-            document.getElementById('modal-confirm-btn').addEventListener('click', () => {
-                confirmCallback();
-                hideModal();
-            });
-            modalCloseBtn.textContent = 'Cancel';
-        } else {
-            modalCloseBtn.textContent = 'Close';
-        }
-    }
-
 
     restartGameBtn.addEventListener('click', () => {
         showModal('Confirm Restart Game', 'Are you sure you want to restart the game? All current scores will be lost.', () => {
@@ -630,6 +735,7 @@ document.addEventListener('DOMContentLoaded', () => {
             gameStartTime = null;
             roundStartTimes = [];
             clearInterval(gameInterval);
+            gameInterval = null; // Clear interval ID
             gameDurationDisplay.textContent = '00:00:00';
             currentRoundDisplay.textContent = '0';
 
@@ -643,8 +749,11 @@ document.addEventListener('DOMContentLoaded', () => {
             gameOverMessage.classList.add('hidden');
             winnerMessage.textContent = '';
             newRoundBtn.disabled = false; // Enable button for new game
-            renderScoreTable(); // Clear table
+            renderScoreTable(); // Clear table display
+            saveGameState(); // Save empty state
         });
     });
 
+    // --- Initial Load ---
+    loadGameState(); // Load game state and render UI
 });

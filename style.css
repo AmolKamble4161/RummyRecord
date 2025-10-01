@@ -482,17 +482,6 @@ button {
         margin: 0; /* Override default margin */
     }
 
-    .player-input-group {
-        flex-direction: column;
-        align-items: stretch;
-    }
-    .player-name-input {
-        width: 100%;
-    }
-    .remove-player-btn {
-        width: 100%;
-    }
-
     #add-player-btn, #start-game-btn {
         width: 100%;
         margin-bottom: 10px;
