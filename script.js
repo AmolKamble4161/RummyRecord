@@ -122,40 +122,64 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem(LS_PLAYERS_KEY, JSON.stringify(players));
     }
 
+
     function loadGameState() {
-        const savedGameState = localStorage.getItem(LS_GAME_STATE_KEY);
-        const savedPlayers = localStorage.getItem(LS_PLAYERS_KEY);
+    const savedGameState = localStorage.getItem(LS_GAME_STATE_KEY);
+    const savedPlayers = localStorage.getItem(LS_PLAYERS_KEY);
 
-        if (savedGameState && savedPlayers) {
-            const gameState = JSON.parse(savedGameState);
-            players = JSON.parse(savedPlayers);
+    if (savedPlayers) {
+        players = JSON.parse(savedPlayers);
 
-            gameStarted = gameState.gameStarted;
-            currentRound = gameState.currentRound;
-            gameStartTime = gameState.gameStartTime ? new Date(gameState.gameStartTime) : null;
-            roundStartTimes = gameState.roundStartTimes.map(time => time ? new Date(time) : null);
-
-            // Re-assign IDs to players to ensure they are unique for DOM manipulation if needed
-            players.forEach((player, index) => player.id = index);
-            playerCount = players.length; // Update playerCount based on loaded players
-
-            if (gameStarted) {
-                playerSetupSection.classList.add('hidden');
-                gameDashboardSection.classList.remove('hidden');
-                if (gameStartTime) {
-                    if (gameInterval) clearInterval(gameInterval);
-                    gameInterval = setInterval(updateGameDuration, 1000);
-                }
-                renderScoreTable();
-            } else {
-                // If game was not started, show player setup with loaded player names
-                renderPlayerSetupInputs();
+        players.forEach((player, index) => {
+            player.id = index;
+            if (!player.rounds) player.rounds = [];
+            if (player.totalPoints === undefined || player.totalPoints === null) {
+                player.totalPoints = 0;
+                player.rounds.forEach(r => {
+                    if (r.points !== null && r.status !== 'out') {
+                        player.totalPoints += r.points;
+                    }
+                });
             }
-        } else {
-            // No saved game, start fresh
-            renderPlayerSetupInputs();
-        }
+            if (player.isOut === undefined) {
+                player.isOut = player.totalPoints >= POINTS_TO_BE_OUT;
+            }
+        });
+
+        playerCount = players.length;
     }
+
+    if (savedGameState) {
+        const gameState = JSON.parse(savedGameState);
+        gameStarted = gameState.gameStarted;
+        currentRound = gameState.currentRound || 0;
+        // Convert string to Date
+        gameStartTime = gameState.gameStartTime ? new Date(gameState.gameStartTime) : null;
+        roundStartTimes = gameState.roundStartTimes
+            ? gameState.roundStartTimes.map(time => time ? new Date(time) : null)
+            : [];
+    }
+
+    if (players && players.length > 0) {
+        playerSetupSection.classList.add('hidden');
+        gameDashboardSection.classList.remove('hidden');
+
+        // Start game timer properly
+        if (gameStartTime) {
+            if (gameInterval) clearInterval(gameInterval);
+            updateGameDuration(); // Show immediately
+            gameInterval = setInterval(updateGameDuration, 1000);
+        }
+
+        renderScoreTable();
+        currentRoundDisplay.textContent = currentRound;
+
+        // If the game already ended, show winner message
+        checkGameOver();
+    } else {
+        renderPlayerSetupInputs();
+    }
+}
 
     function renderPlayerSetupInputs() {
         playerInputContainer.innerHTML = ''; // Clear existing inputs
@@ -366,91 +390,91 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderScoreTable() {
-        // Clear previous header and body
-        tableHeaderRow.innerHTML = '<th>Round</th><th>Duration</th>';
-        scoreTableBody.innerHTML = '';
-        totalPointsRow.innerHTML = '<td>Total</td><td></td>'; // Reset total row
+    // Clear previous header and body
+    tableHeaderRow.innerHTML = '<th>Round</th><th>Duration</th>';
+    scoreTableBody.innerHTML = '';
+    totalPointsRow.innerHTML = '<td>Total</td><td></td>'; // Reset total row
 
-        // Add player names to the header and total row
+    // Add player names to the header and total row
+    players.forEach(player => {
+        const th = document.createElement('th');
+        th.textContent = player.name;
+        // Apply status classes to header
+        if (player.isOut) {
+            th.classList.add('player-out');
+        } else if (player.totalPoints >= DANGER_ZONE_POINTS) {
+            th.classList.add('danger-zone');
+        }
+        tableHeaderRow.appendChild(th);
+
+        const tdTotal = document.createElement('td');
+        tdTotal.id = `total-points-${player.id}`;
+        tdTotal.textContent = player.totalPoints;
+        // Apply status classes to total score
+        if (player.isOut) {
+            tdTotal.classList.add('player-out');
+        } else if (player.totalPoints >= DANGER_ZONE_POINTS) {
+            tdTotal.classList.add('danger-zone');
+        }
+        totalPointsRow.appendChild(tdTotal);
+    });
+
+    // Add score rows for each round
+    for (let r = 1; r <= currentRound; r++) {
+        const row = scoreTableBody.insertRow();
+        const roundCell = row.insertCell();
+        roundCell.textContent = r;
+
+        const durationCell = row.insertCell();
+        const roundStartTimeISO = roundStartTimes[r - 1]; // This is a Date object
+        const roundEndTimeISO = (r === currentRound) ? new Date() : (roundStartTimes[r] || new Date());
+        durationCell.textContent = calculateRoundDuration(roundStartTimeISO, roundEndTimeISO);
+
         players.forEach(player => {
-            const th = document.createElement('th');
-            th.textContent = player.name;
-            // Apply status classes to header
-            if (player.isOut) {
-                th.classList.add('player-out');
-            } else if (player.totalPoints >= DANGER_ZONE_POINTS) {
-                th.classList.add('danger-zone');
-            }
-            tableHeaderRow.appendChild(th);
+            const cell = row.insertCell();
+            const roundData = player.rounds[r - 1]; // rounds are 0-indexed
+            const currentRoundInputActive = (r === currentRound && !player.isOut);
 
-            const tdTotal = document.createElement('td');
-            tdTotal.id = `total-points-${player.id}`;
-            tdTotal.textContent = player.totalPoints;
-            // Apply status classes to total score
-            if (player.isOut) {
-                tdTotal.classList.add('player-out');
-            } else if (player.totalPoints >= DANGER_ZONE_POINTS) {
-                tdTotal.classList.add('danger-zone');
-            }
-            totalPointsRow.appendChild(tdTotal);
-        });
+            if (roundData && roundData.status !== 'out') {
+                if (roundData.status === 'dropped') {
+                    cell.classList.add('dropped');
+                    cell.textContent = 'Drop';
+                } else if (roundData.status === 'win') {
+                    cell.classList.add('win');
+                    cell.textContent = 'Win';
+                } else if (roundData.points !== null) {
+                    cell.textContent = roundData.points;
+                }
 
-        // Add score rows for each round
-        for (let r = 1; r <= currentRound; r++) {
-            const row = scoreTableBody.insertRow();
-            const roundCell = row.insertCell();
-            roundCell.textContent = r;
-
-            const durationCell = row.insertCell();
-            const roundStartTimeISO = roundStartTimes[r - 1]; // This is an ISO string or Date object now
-            const roundEndTimeISO = (r === currentRound) ? new Date().toISOString() : roundStartTimes[r]; // For current round, use now
-            durationCell.textContent = calculateRoundDuration(roundStartTimeISO, roundEndTimeISO);
-
-
-            players.forEach(player => {
-                const cell = row.insertCell();
-                const roundData = player.rounds[r - 1]; // rounds are 0-indexed
-                const currentRoundInputActive = (r === currentRound && !player.isOut);
-
-                if (roundData && roundData.status !== 'out') {
-                    if (roundData.status === 'dropped') {
-                        cell.classList.add('dropped');
-                        cell.textContent = 'Dropped (25)';
-                    } else if (roundData.status === 'win') {
-                        cell.classList.add('win');
-                        cell.textContent = 'Win (0)';
-                    } else if (roundData.points !== null) {
-                        cell.textContent = roundData.points;
-                    }
-
-                    // Only allow editing for the current round if player is not out
-                    if (currentRoundInputActive) {
-                        const input = document.createElement('input');
-                        input.type = 'text';
-                        input.value = roundData.status === 'dropped' ? 'D' : (roundData.status === 'win' ? 'W' : (roundData.points !== null ? roundData.points : ''));
-                        input.setAttribute('data-player-id', player.id);
-                        input.setAttribute('data-round-num', r);
-                        input.addEventListener('change', updatePoints);
-                        cell.innerHTML = ''; // Clear text content
-                        cell.appendChild(input);
-                    }
-                } else if (player.isOut) {
-                    cell.classList.add('player-out');
-                    cell.textContent = 'OUT';
-                } else if (currentRoundInputActive) { // For the current round, add input fields for active players
+                // Only allow editing for the current round if player is not out
+                if (currentRoundInputActive) {
                     const input = document.createElement('input');
                     input.type = 'text';
-                    input.placeholder = 'Points';
+                    input.value = roundData.status === 'dropped' ? 'D' : (roundData.status === 'win' ? 'W' : (roundData.points !== null ? roundData.points : ''));
                     input.setAttribute('data-player-id', player.id);
                     input.setAttribute('data-round-num', r);
                     input.addEventListener('change', updatePoints);
+                    cell.innerHTML = ''; // Clear text content
                     cell.appendChild(input);
                 }
-            });
-        }
-        updateGameStatusDisplay(); // Update player out/danger status after rendering
-        saveGameState(); // Save state after rendering
+            } else if (player.isOut) {
+                cell.classList.add('player-out');
+                cell.textContent = 'OUT';
+            } else if (currentRoundInputActive) { // For the current round, add input fields for active players
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.placeholder = 'Points';
+                input.setAttribute('data-player-id', player.id);
+                input.setAttribute('data-round-num', r);
+                input.addEventListener('change', updatePoints);
+                cell.appendChild(input);
+            }
+        });
     }
+    updateGameStatusDisplay(); // Update player out/danger status after rendering
+    saveGameState(); // Save state after rendering
+}
+
 
     function addNewRound() {
         if (!gameStarted) {
