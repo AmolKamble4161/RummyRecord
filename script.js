@@ -757,3 +757,69 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Initial Load ---
     loadGameState(); // Load game state and render UI
 });
+
+// Function to capture the screenshot and then perform an action (share or download)
+function captureAndProcessScreenshot(action) {
+    const resultsElement = document.getElementById('game-dashboard');
+
+    // --- Detect current theme ---
+    let bgColor = '#f4f7f6';
+    if (document.body.classList.contains('dark-theme')) {
+        bgColor = '#2c3e50';
+    } else if (document.body.classList.contains('light-theme')) {
+        bgColor = '#f4f7f6';
+    }
+    // --- End theme detection ---
+
+    html2canvas(resultsElement, {
+        allowTaint: true,
+        useCORS: true,
+        backgroundColor: bgColor,
+        scale: 2
+    }).then(function(canvas) {
+        if (action === 'share') {
+            canvas.toBlob(function(blob) {
+                const file = new File([blob], 'rummy_record.png', { type: 'image/png' });
+
+                if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                    navigator.share({
+                            files: [file],
+                            title: 'My Rummy Record',
+                            text: 'Check out my latest Rummy game result!',
+                            url: 'https://amolkamble4161.github.io/RummyRecord/'
+                        })
+                        .then(() => console.log('Share successful'))
+                        .catch((error) => console.error('Sharing failed', error));
+                } else {
+                    // Fallback for sharing if Web Share API isn't supported for files
+                    console.log('Web Share API for files not supported, offering download instead for sharing fallback.');
+                    downloadCanvasAsImage(canvas, 'rummy_record.png'); // Use the new download function
+                }
+            }, 'image/png');
+        } else if (action === 'download') {
+            downloadCanvasAsImage(canvas, 'rummy_record.png');
+        }
+    });
+}
+
+// Helper function to download a canvas as an image
+function downloadCanvasAsImage(canvas, filename) {
+    const link = document.createElement('a');
+    link.download = filename;
+    link.href = canvas.toDataURL('image/png');
+    document.body.appendChild(link); // Required for Firefox
+    link.click();
+    document.body.removeChild(link); // Clean up
+    console.log('Image download initiated.');
+}
+
+
+// Event listener for the Share button
+document.getElementById('shareScreenshot').addEventListener('click', function() {
+    captureAndProcessScreenshot('share');
+});
+
+// Event listener for the new Download button
+document.getElementById('download-btn').addEventListener('click', function() {
+    captureAndProcessScreenshot('download');
+});
